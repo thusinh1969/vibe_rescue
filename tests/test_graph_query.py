@@ -83,3 +83,23 @@ def test_parse_dot_fallback():
     assert [n["id"] for n in nodes] == ["m.a", "m.b"]
     assert nodes[0]["file"] == "m.py" and nodes[0]["line"] == 3
     assert edges == [{"source": "m.b", "target": "m.a", "kind": "Pyan static uses"}]
+
+
+def test_clusters_cover_every_connected_symbol(tmp_path):
+    graph = _graph(tmp_path)
+    clusters = graph.clusters()
+    assert sum(cluster["size"] for cluster in clusters) == len(graph.nodes)
+    assert max(cluster["size"] for cluster in clusters) >= 2
+
+
+def test_render_context_writes_agent_page(tmp_path):
+    atlas = _atlas(tmp_path, [
+        {"id": "m.a", "label": "m.a", "file": "m.py", "line": 1},
+        {"id": "m.b", "label": "m.b", "file": "m.py", "line": 2},
+    ], [{"source": "m.b", "target": "m.a", "kind": "Pyan static uses"}])
+    out = tmp_path / "graph" / "CONTEXT.md"
+    text = graph_query.render_context(atlas, out, "demo")
+    assert "Hubs (most callers)" in text
+    assert "Clusters:" in text
+    assert "graph_query.py callers" in text
+    assert out.exists()

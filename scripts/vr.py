@@ -104,12 +104,14 @@ def write_start_here(out, s):
                "- Open `handoff.html` (English) or `handoff.vi.html` (Vietnamese). It is the packet to give a new teammate.",
                "- To work with an AI chat: paste `HANDOFF.md` into Claude, Codex or any model.",
                "- `atlas/INDEX.md` lists maps for every language found; `manifest.json` there says how complete they are.",
-               "- `graph/INDEX.md` ranks the call graph (hubs, hotspots) and shows how to ask `callers` / `impact` before changing a symbol.", ""]
+               "- `graph/INDEX.md` ranks the call graph (hubs, hotspots, clusters) and shows how to ask `callers` / `impact` before changing a symbol.",
+               "- `graph/CONTEXT.md` is the compact context to paste into an AI before it explores this repository.", ""]
         vi += ["## 1. Bản đồ (đã xong)", f"- File Python: {ex.get('code_files', 'n/a')}, khối chức năng: {ex.get('blocks', 'n/a')}, hành trình có tài liệu: {ex.get('journeys', 'n/a')}.",
                "- Mở `handoff.vi.html` (tiếng Việt) hoặc `handoff.html` (tiếng Anh). Đây là bản bàn giao cho thành viên mới.",
                "- Muốn hỏi AI: dán `HANDOFF.md` vào Claude, Codex hoặc model bất kỳ.",
                "- `atlas/INDEX.md` liệt kê bản đồ cho mọi ngôn ngữ tìm thấy; `manifest.json` ở đó cho biết bản đồ đầy đủ đến đâu.",
-               "- `graph/INDEX.md` xếp hạng đồ thị gọi (hub, hotspot) và chỉ cách hỏi `callers` / `impact` trước khi sửa một symbol.", ""]
+               "- `graph/INDEX.md` xếp hạng đồ thị gọi (hub, hotspot, cluster) và chỉ cách hỏi `callers` / `impact` trước khi sửa một symbol.",
+               "- `graph/CONTEXT.md` là context gọn để dán vào AI trước khi nó khám phá repo này.", ""]
     else:
         en += ["## 1. The map (not done yet)", "- Run `./vr explore PROJECT`.", ""]
         vi += ["## 1. Bản đồ (chưa chạy)", "- Chạy `./vr explore PROJECT`.", ""]
@@ -136,6 +138,15 @@ def write_start_here(out, s):
     else:
         en += ["## 3. AI report and fix (optional)", "- `./vr ai claude` or `./vr ai openai ...`, then `./vr report PROJECT` and `./vr fix PROJECT --test \"your test command\"`.", ""]
         vi += ["## 3. Báo cáo AI và sửa (tùy chọn)", "- `./vr ai claude` hoặc `./vr ai openai ...`, rồi `./vr report PROJECT` và `./vr fix PROJECT --test \"lệnh test của bạn\"`.", ""]
+    try:
+        sys.path.insert(0, str(ROOT))
+        from scripts import learnings as _learnings
+        notes = len(_learnings.load(out))
+    except (ImportError, OSError):
+        notes = 0
+    if notes:
+        en.append(f"- `learnings/LEARNINGS.md`: {notes} note(s) the team recorded; `./vr note` adds one.")
+        vi.append(f"- `learnings/LEARNINGS.md`: {notes} ghi chú team đã lưu; `./vr note` để thêm.")
     (out / "START_HERE.md").write_text("\n".join(en) + "\n---\n\n" + "\n".join(vi) + "\n", encoding="utf-8")
 
 
@@ -183,6 +194,11 @@ def cmd_explore(a):
              [sys.executable, str(SCRIPTS / "graph_query.py"), "index",
               "--atlas", str(out / "atlas"), "--out", str(out / "graph" / "INDEX.md")],
              logs / "graph.log", ok_codes=(0, 2))
+        step("agent context (graph/CONTEXT.md)",
+             [sys.executable, str(SCRIPTS / "graph_query.py"), "context",
+              "--atlas", str(out / "atlas"), "--out", str(out / "graph" / "CONTEXT.md"),
+              "--repo", project.name],
+             logs / "context.log", ok_codes=(0, 2))
     summary = {}
     if has_python(project):
         ok2, _, _ = step("team handoff and architecture map (Python)", [sys.executable, str(SCRIPTS / "repo_explorer.py"), "--generic", "--root", str(project), "--sources", ".",
@@ -350,6 +366,44 @@ def cmd_fix(a):
     return rc
 
 
+def cmd_note(a):
+    project = resolve_project(a.project)
+    out = out_dir(project)
+    sys.path.insert(0, str(ROOT))
+    from scripts import learnings
+    entry = learnings.add(out, " ".join(a.text), files=a.file, project=project)
+    say(f"Recorded: {entry['text']}")
+    say(f"  read: {out / 'learnings' / 'LEARNINGS.md'}")
+    return 0
+
+
+def cmd_learnings(a):
+    project = resolve_project(a.project)
+    out = out_dir(project)
+    sys.path.insert(0, str(ROOT))
+    from scripts import learnings
+    if a.check:
+        changed = [line[3:].split(" -> ")[-1].strip('"')
+                   for line in git(project, "status", "--porcelain").stdout.splitlines()
+                   if len(line) > 3]
+        hits = learnings.check(out, changed)
+        if not hits:
+            say(f"No learning mentions the {len(changed)} changed path(s).")
+            return 0
+        say(f"{len(hits)} learning(s) mention changed paths — read before editing:")
+        for entry in hits:
+            say(f"- {entry['text']}  [{', '.join(entry['files'])}]")
+        return 0
+    entries = learnings.recent(out, a.limit)
+    if not entries:
+        say('Nothing recorded yet. Add one: ./vr note "what you worked out"')
+        return 0
+    for entry in entries:
+        where = f"  [{', '.join(entry['files'])}]" if entry["files"] else ""
+        say(f"- {entry['at']} {entry['text']}{where}")
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="vr", description="Vibe Rescue: understand a messy codebase, then clean it up safely. Nothing changes without your yes.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -378,6 +432,16 @@ def main(argv=None):
     q.add_argument("--allow-http", action="store_true", help="allow plain http to a trusted non-local server")
     q.add_argument("--force", action="store_true")
     q.set_defaults(f=cmd_ai)
+    n = sub.add_parser("note", help="record what the team worked out (no AI)")
+    n.add_argument("project", nargs="?", default=".")
+    n.add_argument("text", nargs="+", help="the learning, in one or more words")
+    n.add_argument("--file", action="append", default=[], help="file this learning is about (repeatable)")
+    n.set_defaults(f=cmd_note)
+    ln = sub.add_parser("learnings", help="list learnings, or check them against the working tree")
+    ln.add_argument("project", nargs="?", default=".")
+    ln.add_argument("--check", action="store_true", help="show learnings that mention changed files")
+    ln.add_argument("--limit", type=int, default=10)
+    ln.set_defaults(f=cmd_learnings)
     a = p.parse_args(argv)
     return a.f(a)
 

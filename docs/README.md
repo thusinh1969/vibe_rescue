@@ -8,6 +8,8 @@ Language: EN = English, VI = Vietnamese. Most internal documents are Vietnamese.
 | [V0.8_PREVIEW.md](V0.8_PREVIEW.md), [V0.8_PREVIEW.vi.md](V0.8_PREVIEW.vi.md) | EN, VI | what the v0.8 preview proves and what stays a reviewer task |
 | [ARCHITECTURE_ATLAS.md](ARCHITECTURE_ATLAS.md) | EN | how the architecture atlas and handoff are built, the evidence rules and limits |
 | [LOGIC_ATLAS.md](LOGIC_ATLAS.md) | VI | multi-language static maps and what they cannot show |
+| [GRAPH_QUERIES.md](GRAPH_QUERIES.md) | EN | ranked hubs/hotspots, callers/impact/skeleton, clusters, agent context and learnings |
+| [PROVENANCE.md](PROVENANCE.md) | EN | what came from Trail-Code/Graft (MIT), what we re-implemented, what we left out |
 | [REPO_RUNTIME_ATLAS.md](REPO_RUNTIME_ATLAS.md) | VI | how Vibe Rescue itself runs, and the risk register R1 to R9 |
 | [PIPELINE.md](PIPELINE.md) | VI | MAP, PROVE, PLAN, REPAIR, LOCK: entry and exit criteria, plan format |
 | [VOYAGE.md](VOYAGE.md) | VI | the one-command session with owner gates |

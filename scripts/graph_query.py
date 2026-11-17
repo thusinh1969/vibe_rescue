@@ -13,7 +13,7 @@ import argparse
 import ast
 import json
 import re
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from pathlib import Path
 
 NODE_RE = re.compile(r'^\s*"([^"]+)" \[label="([^"]+)".*tooltip="((?:\\.|[^"])*)"')
@@ -121,6 +121,50 @@ class Graph:
     def callees(self, node_id: str) -> list[str]:
         return sorted(self.out[node_id])
 
+    def clusters(self, iterations: int = 25) -> list[dict]:
+        """Group symbols into call-graph communities by deterministic label propagation.
+
+        Offline and cheap: neighbours vote, ties go to the smallest label, so the same
+        graph always yields the same clusters. A cluster is a lead for "what belongs
+        together", not a bounded-context claim.
+        """
+        labels = {node_id: node_id for node_id in self.nodes}
+        neighbours = {node_id: set(self.inn[node_id]) | set(self.out[node_id])
+                      for node_id in self.nodes}
+        order = sorted(self.nodes)
+        for _ in range(iterations):
+            changed = False
+            for node_id in order:
+                if not neighbours[node_id]:
+                    continue
+                counts = Counter(labels[other] for other in neighbours[node_id])
+                best = min(counts.items(), key=lambda item: (-item[1], item[0]))[0]
+                if labels[node_id] != best:
+                    labels[node_id] = best
+                    changed = True
+            if not changed:
+                break
+        groups: dict[str, list[str]] = defaultdict(list)
+        for node_id, label in labels.items():
+            groups[label].append(node_id)
+        result = []
+        for members in groups.values():
+            members = sorted(members)
+            inside = set(members)
+            bridges = sorted(
+                node for node in members
+                if any(other not in inside for other in self.out[node] | self.inn[node]))
+            files = Counter(self.nodes[node]["file"].split("/")[0]
+                            for node in members if self.nodes[node]["file"])
+            result.append({
+                "size": len(members),
+                "files": [name for name, _ in files.most_common(3)],
+                "members": members,
+                "hubs": sorted(members, key=lambda n: len(self.inn[n]), reverse=True)[:5],
+                "bridges": bridges[:5],
+            })
+        return sorted(result, key=lambda cluster: (-cluster["size"], cluster["members"][0]))
+
     def impact(self, node_id: str, depth: int = 3) -> dict[int, list[str]]:
         """Reverse BFS: who would feel a change here, level by level."""
         seen = {node_id}
@@ -210,6 +254,12 @@ def render_index(atlas: Path, out_path: Path, top: int = 15) -> str:
         for node_id in graph.rank("out", top):
             node = graph.nodes[node_id]
             lines.append(f"- {describe(node)} — calls {len(graph.out[node_id])}")
+        lines += ["", "### Concepts (call-graph clusters)", ""]
+        for cluster in graph.clusters()[:8]:
+            hubs = ", ".join(graph.nodes[n]["label"] for n in cluster["hubs"][:3])
+            where = "/".join(cluster["files"]) or "?"
+            bridges = f"; {len(cluster['bridges'])} bridge(s)" if cluster["bridges"] else ""
+            lines.append(f"- {where} — {cluster['size']} symbols{bridges}; hubs: {hubs}")
         lines.append("")
     lines += ["## Ask", "",
               "```bash",
@@ -217,6 +267,39 @@ def render_index(atlas: Path, out_path: Path, top: int = 15) -> str:
               "python scripts/graph_query.py callers --atlas VIBE_RESCUE/atlas run_scan",
               "python scripts/graph_query.py impact  --atlas VIBE_RESCUE/atlas run_scan --depth 3",
               "python scripts/graph_query.py skeleton scripts/logic_atlas.py",
+              "```", ""]
+    text = "\n".join(lines)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(text + "\n", encoding="utf-8")
+    return text
+
+
+def render_context(atlas: Path, out_path: Path, repo: str = "",
+                   top: int = 10, max_clusters: int = 6) -> str:
+    """A compact context page an agent reads before opening any source file."""
+    graphs = load_graphs(atlas)
+    lines = [f"# Code context — {repo or 'this repository'}", "",
+             ("Generated from the static atlas by ./vr explore. Read this before opening files; "
+              "ask the graph instead of guessing. Static references only — dynamic dispatch and "
+              "callbacks are not resolved."), ""]
+    for graph in graphs:
+        edges = sum(len(targets) for targets in graph.out.values())
+        lines += [f"## {graph.language} — {len(graph.nodes)} symbols, {edges} edges", "",
+                  "Hubs (most callers):"]
+        for node_id in graph.rank("in", top):
+            node = graph.nodes[node_id]
+            lines.append(f"- {describe(node)} — {len(graph.inn[node_id])} callers")
+        lines += ["", "Clusters:"]
+        for cluster in graph.clusters()[:max_clusters]:
+            hubs = ", ".join(graph.nodes[n]["label"] for n in cluster["hubs"][:3])
+            where = "/".join(cluster["files"]) or "?"
+            lines.append(f"- {where} — {cluster['size']} symbols; hubs: {hubs}")
+        lines.append("")
+    lines += ["## Ask", "", "```bash",
+              "python scripts/graph_query.py hubs    --atlas VIBE_RESCUE/atlas --top 20",
+              "python scripts/graph_query.py callers --atlas VIBE_RESCUE/atlas <symbol>",
+              "python scripts/graph_query.py impact  --atlas VIBE_RESCUE/atlas <symbol> --depth 3",
+              "python scripts/graph_query.py skeleton <file.py>",
               "```", ""]
     text = "\n".join(lines)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,6 +329,15 @@ def main(argv: list[str] | None = None) -> int:
     atlas_arg(p_index)
     p_index.add_argument("--out", type=Path, default=Path("VIBE_RESCUE/graph/INDEX.md"))
     p_index.add_argument("--top", type=int, default=15)
+
+    p_context = sub.add_parser("context", help="write graph/CONTEXT.md for agents")
+    atlas_arg(p_context)
+    p_context.add_argument("--out", type=Path, default=Path("VIBE_RESCUE/graph/CONTEXT.md"))
+    p_context.add_argument("--repo", default="")
+
+    p_clusters = sub.add_parser("clusters", help="call-graph communities")
+    atlas_arg(p_clusters)
+    p_clusters.add_argument("--top", type=int, default=10)
 
     for name in ("hubs", "hotspots"):
         p = sub.add_parser(name)
@@ -277,10 +369,32 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {args.out}")
         return 0
 
+    if args.command == "context":
+        render_context(args.atlas, args.out, args.repo)
+        print(f"wrote {args.out}")
+        return 0
+
     graphs = load_graphs(args.atlas)
     if not graphs:
         print(f"không có graph trong {args.atlas} — chạy ./vr explore trước")
         return 2
+
+    if args.command == "clusters":
+        payload = {}
+        for graph in graphs:
+            payload[graph.language] = [
+                {key: cluster[key] for key in ("size", "files", "bridges")}
+                | {"hubs": [graph.nodes[n]["label"] for n in cluster["hubs"]]}
+                for cluster in graph.clusters()[:args.top]]
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=1))
+            return 0
+        for language, clusters in payload.items():
+            print(f"## {language}")
+            for cluster in clusters:
+                where = "/".join(cluster["files"]) or "?"
+                print(f"  {where} — {cluster['size']} symbols; hubs: {', '.join(cluster['hubs'])}")
+        return 0
 
     if args.command in ("hubs", "hotspots"):
         payload = {}
