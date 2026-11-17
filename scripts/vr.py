@@ -103,11 +103,13 @@ def write_start_here(out, s):
         en += ["## 1. The map (done)", f"- Python files: {ex.get('code_files', 'n/a')}, functional blocks: {ex.get('blocks', 'n/a')}, documented journeys: {ex.get('journeys', 'n/a')}.",
                "- Open `handoff.html` (English) or `handoff.vi.html` (Vietnamese). It is the packet to give a new teammate.",
                "- To work with an AI chat: paste `HANDOFF.md` into Claude, Codex or any model.",
-               "- `atlas/INDEX.md` lists maps for every language found; `manifest.json` there says how complete they are.", ""]
+               "- `atlas/INDEX.md` lists maps for every language found; `manifest.json` there says how complete they are.",
+               "- `graph/INDEX.md` ranks the call graph (hubs, hotspots) and shows how to ask `callers` / `impact` before changing a symbol.", ""]
         vi += ["## 1. Bản đồ (đã xong)", f"- File Python: {ex.get('code_files', 'n/a')}, khối chức năng: {ex.get('blocks', 'n/a')}, hành trình có tài liệu: {ex.get('journeys', 'n/a')}.",
                "- Mở `handoff.vi.html` (tiếng Việt) hoặc `handoff.html` (tiếng Anh). Đây là bản bàn giao cho thành viên mới.",
                "- Muốn hỏi AI: dán `HANDOFF.md` vào Claude, Codex hoặc model bất kỳ.",
-               "- `atlas/INDEX.md` liệt kê bản đồ cho mọi ngôn ngữ tìm thấy; `manifest.json` ở đó cho biết bản đồ đầy đủ đến đâu.", ""]
+               "- `atlas/INDEX.md` liệt kê bản đồ cho mọi ngôn ngữ tìm thấy; `manifest.json` ở đó cho biết bản đồ đầy đủ đến đâu.",
+               "- `graph/INDEX.md` xếp hạng đồ thị gọi (hub, hotspot) và chỉ cách hỏi `callers` / `impact` trước khi sửa một symbol.", ""]
     else:
         en += ["## 1. The map (not done yet)", "- Run `./vr explore PROJECT`.", ""]
         vi += ["## 1. Bản đồ (chưa chạy)", "- Chạy `./vr explore PROJECT`.", ""]
@@ -176,6 +178,11 @@ def cmd_explore(a):
     logs.mkdir(exist_ok=True)
     ok1, _, rc1 = step("map of every language (atlas)", [sys.executable, str(SCRIPTS / "logic_atlas.py"), "--target", str(project), "--outdir", str(out / "atlas")],
                        logs / "atlas.log", ok_codes=(0, 2))
+    if (out / "atlas").exists():
+        step("graph queries: hubs, callers, impact (static)",
+             [sys.executable, str(SCRIPTS / "graph_query.py"), "index",
+              "--atlas", str(out / "atlas"), "--out", str(out / "graph" / "INDEX.md")],
+             logs / "graph.log", ok_codes=(0, 2))
     summary = {}
     if has_python(project):
         ok2, _, _ = step("team handoff and architecture map (Python)", [sys.executable, str(SCRIPTS / "repo_explorer.py"), "--generic", "--root", str(project), "--sources", ".",

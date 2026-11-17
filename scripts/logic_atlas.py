@@ -328,6 +328,10 @@ def generate(target, scope, outdir, max_files=400, timeout=180, inventory_only=F
                     continue
                 if tools[lang]["status"] == "ok":
                     graph = _pyan_graph(output.read_text(encoding="utf-8"))
+                    # Persist the parsed graph so graph_query.py can rank/query it without re-running Pyan.
+                    (outdir / "python-graph.json").write_text(
+                        json.dumps(graph, ensure_ascii=False, indent=1), encoding="utf-8")
+                    tools[lang]["graph"] = "python-graph.json"
             if graph is not None and tools[lang]["status"] in {"ok", "partial"}:
                 view = write_graph(graph, f"{target.name} · {lang}", outdir,
                                    f"{lang}-map", pdf=pdf)
